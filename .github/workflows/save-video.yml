@@ -1,0 +1,44 @@
+name: Save video
+# Downloads a finished episode from a temporary link and keeps it on branch claude/videos,
+# so that it has a lasting public address. Started by the daily Ustopia task.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Direct link to the finished MP4"
+        required: true
+      name:
+        description: "File name, for example ep001.mp4"
+        required: true
+permissions:
+  contents: write
+concurrency: save-video
+jobs:
+  save:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/videos
+      - name: Download and check
+        env:
+          URL: ${{ inputs.url }}
+          NAME: ${{ inputs.name }}
+        run: |
+          case "$NAME" in ep[0-9][0-9][0-9]*.mp4) ;; *) echo "Bad file name"; exit 1;; esac
+          case "$NAME" in */*|*..*) echo "Bad file name"; exit 1;; esac
+          case "$URL" in https://*) ;; *) echo "The link must start with https://"; exit 1;; esac
+          mkdir -p ep
+          curl -fsSL --max-time 300 --max-filesize 104857600 -o "ep/$NAME" "$URL"
+          sudo apt-get install -y -qq ffmpeg > /dev/null 2>&1 || true
+          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of default=nw=1 "ep/$NAME"
+          test "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "ep/$NAME")" = "1080x1920"
+      - name: Save
+        env:
+          NAME: ${{ inputs.name }}
+        run: |
+          git config user.name "ustopia-bot"
+          git config user.email "ustopia-bot@users.noreply.github.com"
+          git add "ep/$NAME"
+          git diff --cached --quiet || git commit -m "Episode video $NAME"
+          git push origin HEAD:claude/videos
